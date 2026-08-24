@@ -304,11 +304,16 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
         (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_PROVIDER),
         (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_XCOM),
         (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_HITL_DETAIL),
+        (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_TEAM),
         (permissions.ACTION_CAN_READ, permissions.RESOURCE_CONFIG),
         (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_CONNECTION),
         (permissions.ACTION_CAN_READ, permissions.RESOURCE_CONNECTION),
         (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_CONNECTION),
         (permissions.ACTION_CAN_DELETE, permissions.RESOURCE_CONNECTION),
+        (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_TEAM),
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_TEAM),
+        (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_TEAM),
+        (permissions.ACTION_CAN_DELETE, permissions.RESOURCE_TEAM),
         (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_POOL),
         (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_POOL),
         (permissions.ACTION_CAN_DELETE, permissions.RESOURCE_POOL),
@@ -344,6 +349,9 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
         (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_PASSWORD),
         (permissions.ACTION_CAN_READ, permissions.RESOURCE_ROLE),
         (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_ROLE),
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_TEAM),
+        (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_TEAM),
+        (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_TEAM),
     ]
     # [END security_admin_perms]
 
@@ -352,18 +360,21 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
     ###########################################################################
 
     ROLE_CONFIGS: list[dict[str, Any]] = [
-        {"role": "Public", "perms": []},
-        {"role": "Viewer", "perms": VIEWER_PERMISSIONS},
+        {"role": "Public", "team_name": None, "perms": []},
+        {"role": "Viewer", "team_name": None, "perms": VIEWER_PERMISSIONS},
         {
             "role": "User",
+            "team_name": None,
             "perms": VIEWER_PERMISSIONS + USER_PERMISSIONS,
         },
         {
             "role": "Op",
+            "team_name": None,
             "perms": VIEWER_PERMISSIONS + USER_PERMISSIONS + OP_PERMISSIONS,
         },
         {
             "role": "Admin",
+            "team_name": None,
             "perms": VIEWER_PERMISSIONS + USER_PERMISSIONS + OP_PERMISSIONS + ADMIN_PERMISSIONS,
         },
     ]
@@ -1259,6 +1270,25 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
     def perms_include_action(self, perms, action_name) -> bool:
         return any(perm.action and perm.action.name == action_name for perm in perms)
 
+    def update_role_permissions(self, role: dict) -> None:
+        role_name = role["name"]
+        role_perms = role["permissions"]
+        existing_role = self.find_role(role_name)
+        if not existing_role:
+            return
+        non_dag_perms = self._get_all_non_dag_permissions()
+
+        permissions = [non_dag_perms.get((action_name, resource_name)) or self.create_permission(action_name, resource_name) for action_name, resource_name in role_perms]
+
+        fix_permissions = [*existing_role.permissions]
+        for perm in permissions:
+            if perm not in fix_permissions:
+                self.add_permission_to_role(existing_role, perm)
+
+        for perm in fix_permissions:
+            if perm not in permissions:
+                self.remove_permission_from_role(existing_role, perm)
+
     def bulk_sync_roles(self, roles: Iterable[dict[str, Any]]) -> None:
         """Sync the provided roles and permissions."""
         existing_roles = self._get_all_roles_with_permissions()
@@ -1266,8 +1296,10 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
 
         for config in roles:
             role_name = config["role"]
+            team = config["team_name"]
             perms = config["perms"]
             role = existing_roles.get(role_name) or self.add_role(role_name)
+            role.team_name = team
 
             for action_name, resource_name in perms:
                 perm = non_dag_perms.get((action_name, resource_name)) or self.create_permission(
@@ -1283,13 +1315,14 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
     -----------
     """
 
-    def update_role(self, role_id, name: str) -> Role | None:
+    def update_role(self, role_id, name: str, team_name: str | None) -> Role | None:
         """Update a role in the database."""
         role = self.session.get(self.role_model, role_id)
         if not role:
             return None
         try:
             role.name = name
+            role.team_name = team_name
             self.session.merge(role)
             self.session.commit()
             log.info(const.LOGMSG_INF_SEC_UPD_ROLE, role)
@@ -1299,13 +1332,14 @@ class FabAirflowSecurityManagerOverride(AirflowSecurityManagerV2):
             return None
         return role
 
-    def add_role(self, name: str) -> Role:
+    def add_role(self, name: str, team: str | None = None) -> Role:
         """Add a role in the database."""
         role = self.find_role(name)
         if role is None:
             try:
                 role = self.role_model()
                 role.name = name
+                role.team_name = team
                 self.session.add(role)
                 self.session.commit()
                 log.info(const.LOGMSG_INF_SEC_ADD_ROLE, name)

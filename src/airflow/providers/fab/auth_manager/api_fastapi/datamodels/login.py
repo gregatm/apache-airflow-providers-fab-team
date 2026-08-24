@@ -23,3 +23,11 @@ class LoginResponse(BaseModel):
     """API Token serializer for responses."""
 
     access_token: str
+
+class ProviderResource(BaseModel):
+    name: str
+    icon: str
+
+class ProvidersResponse(BaseModel):
+    """List of providers"""
+    providers: list[ProviderResource]

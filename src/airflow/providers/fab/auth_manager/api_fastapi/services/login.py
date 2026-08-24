@@ -21,7 +21,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from airflow.providers.common.compat.sdk import conf
-from airflow.providers.fab.auth_manager.api_fastapi.datamodels.login import LoginResponse
+from airflow.providers.fab.auth_manager.api_fastapi.datamodels.login import LoginResponse, ProvidersResponse, ProviderResource
 from airflow.providers.fab.www.utils import get_fab_auth_manager
 
 
@@ -50,3 +50,22 @@ class FABAuthManagerLogin:
                 user=user, expiration_time_in_seconds=expiration_time_in_seconds
             )
         )
+
+    @classmethod
+    def get_providers(
+        cls
+    ) -> ProvidersResponse:
+        """Create a new token."""
+        auth_manager = get_fab_auth_manager()
+        try:
+            providers = auth_manager.security_manager.oauth_providers
+            providers = list(map(lambda x: ProviderResource(name = x["name"], icon = x["icon"]), providers))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+        if not providers:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+
+
+        return ProvidersResponse(providers=providers)

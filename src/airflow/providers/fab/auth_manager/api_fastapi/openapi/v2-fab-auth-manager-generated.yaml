@@ -46,6 +46,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /auth/providers:
+    get:
+      tags:
+      - FabAuthManager
+      summary: Get Providers
+      description: Retrieve providers from fab
+      operationId: get_providers
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvidersResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
   /auth/token/cli:
     post:
       tags:
@@ -187,6 +213,34 @@ paths:
           default: 0
           title: Offset
         description: Number of items to skip before starting to collect results.
+      - name: roleNamePrefixPattern
+        in: query
+        required: false
+        schema:
+          type: string
+          description: Name prefix to filter roles by.
+          default: ''
+          title: Rolenameprefixpattern
+        description: Name prefix to filter roles by.
+      - name: roleNamePattern
+        in: query
+        required: false
+        schema:
+          type: string
+          description: Name to filter roles by.
+          default: ''
+          title: Rolenamepattern
+        description: Name to filter roles by.
+      - name: team_name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Team to filter roles by.
+          title: Team Name
+        description: Team to filter roles by.
       - name: limit
         in: query
         required: false
@@ -768,6 +822,109 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /auth/fab/v1/teams:
+    post:
+      tags:
+      - FabAuthManager
+      summary: Create Team
+      operationId: create_team
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamBody'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - OAuth2PasswordBearer: []
+      - HTTPBearer: []
+  /auth/fab/v1/teams/{teamname}:
+    delete:
+      tags:
+      - FabAuthManager
+      summary: Delete Team
+      description: Delete a user by username.
+      operationId: delete_team
+      security:
+      - OAuth2PasswordBearer: []
+      - HTTPBearer: []
+      parameters:
+      - name: teamname
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          title: Teamname
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     Action:
@@ -839,6 +996,31 @@ components:
       - total_entries
       title: PermissionCollectionResponse
       description: Outgoing representation of a paginated collection of permissions.
+    ProviderResource:
+      properties:
+        name:
+          type: string
+          title: Name
+        icon:
+          type: string
+          title: Icon
+      type: object
+      required:
+      - name
+      - icon
+      title: ProviderResource
+    ProvidersResponse:
+      properties:
+        providers:
+          items:
+            $ref: '#/components/schemas/ProviderResource'
+          type: array
+          title: Providers
+      type: object
+      required:
+      - providers
+      title: ProvidersResponse
+      description: List of providers
     Resource:
       properties:
         name:
@@ -854,9 +1036,15 @@ components:
         name:
           type: string
           title: Name
+        team_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team Name
       type: object
       required:
       - name
+      - team_name
       title: Role
       description: Lightweight role reference used by /users schemas.
     RoleBody:
@@ -865,6 +1053,11 @@ components:
           type: string
           minLength: 1
           title: Name
+        team_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team Name
         actions:
           items:
             $ref: '#/components/schemas/ActionResource'
@@ -897,6 +1090,11 @@ components:
         name:
           type: string
           title: Name
+        team_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team Name
         actions:
           items:
             $ref: '#/components/schemas/ActionResource'
@@ -905,8 +1103,30 @@ components:
       type: object
       required:
       - name
+      - team_name
       title: RoleResponse
       description: Outgoing representation of a role and its permissions.
+    TeamBody:
+      properties:
+        name:
+          type: string
+          minLength: 1
+          title: Name
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      title: TeamBody
+    TeamResponse:
+      properties:
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - name
+      title: TeamResponse
+      description: Base serializer for Team.
     UserBody:
       properties:
         username:

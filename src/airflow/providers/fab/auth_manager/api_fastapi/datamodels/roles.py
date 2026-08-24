@@ -44,12 +44,14 @@ class Role(BaseModel):
     """Lightweight role reference used by /users schemas."""
 
     name: str
+    team_name: str | None
 
 
 class RoleBody(StrictBaseModel):
     """Incoming payload for creating/updating a role."""
 
     name: str = Field(min_length=1)
+    team_name: str | None = Field
     permissions: list[ActionResource] = Field(
         default_factory=list, alias="actions", validation_alias="actions"
     )
@@ -59,6 +61,7 @@ class RoleResponse(BaseModel):
     """Outgoing representation of a role and its permissions."""
 
     name: str
+    team_name: str | None
     permissions: list[ActionResource] = Field(default_factory=list, serialization_alias="actions")
 
 

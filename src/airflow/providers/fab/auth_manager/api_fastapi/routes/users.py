@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import Depends, Path, Query, status
 
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
+from airflow.api_fastapi.logging.decorators import action_logging
 from airflow.providers.fab.auth_manager.api_fastapi.datamodels.users import (
     UserBody,
     UserCollectionResponse,
@@ -44,7 +45,7 @@ from airflow.providers.fab.www.security import permissions
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("POST", permissions.RESOURCE_USER))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("POST", permissions.RESOURCE_USER))],
 )
 def create_user(body: UserBody) -> UserResponse:
     with get_application_builder():
@@ -67,10 +68,12 @@ def get_users(
     order_by: str = Query("id", description="Field to order by. Prefix with '-' for descending."),
     limit: int = Depends(get_effective_limit()),
     offset: int = Query(0, ge=0, description="Number of items to skip before starting to collect results."),
+    usernamePrefixPattern: str = Query("", description="Name prefix to filter users by."),
+    usernamePattern: str = Query("", description="Name to filter users by."),
 ) -> UserCollectionResponse:
     """List users with pagination and ordering."""
     with get_application_builder():
-        return FABAuthManagerUsers.get_users(order_by=order_by, limit=limit, offset=offset)
+        return FABAuthManagerUsers.get_users(order_by=order_by, limit=limit, offset=offset, usernamePattern=usernamePattern, usernamePrefixPattern=usernamePrefixPattern)
 
 
 @fab_router.get(
@@ -101,7 +104,7 @@ def get_user(username: str = Path(..., min_length=1)) -> UserResponse:
             status.HTTP_409_CONFLICT,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("PUT", permissions.RESOURCE_USER))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("PUT", permissions.RESOURCE_USER))],
 )
 def update_user(
     body: UserPatchBody,
@@ -123,7 +126,7 @@ def update_user(
             status.HTTP_404_NOT_FOUND,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("DELETE", permissions.RESOURCE_USER))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("DELETE", permissions.RESOURCE_USER))],
 )
 def delete_user(username: str = Path(..., min_length=1)):
     """Delete a user by username."""

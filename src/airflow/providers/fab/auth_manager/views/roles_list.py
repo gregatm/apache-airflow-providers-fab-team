@@ -24,6 +24,11 @@ from airflow.providers.fab.www.security import permissions
 class CustomRoleModelView(RoleModelView):
     """Customize permission names for FAB's builtin RoleModelView."""
 
+    list_columns = ["name", "team_name", "permissions"]
+    show_columns = ["name", "team_name", "permissions"]
+    edit_columns = ["name", "team_name", "permissions"]
+    add_columns = edit_columns
+
     class_permission_name = permissions.RESOURCE_ROLE
     method_permission_name = {
         "delete": "delete",

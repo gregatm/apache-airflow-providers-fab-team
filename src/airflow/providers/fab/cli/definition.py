@@ -61,6 +61,7 @@ ARG_ROLE = Arg(
     required=True,
     type=str,
 )
+ARG_TEAM = Arg(("-t", "--team"), help="Team", required=False, type=str)
 ARG_EMAIL = Arg(("-e", "--email"), help="Email of the user", required=True, type=str)
 ARG_EMAIL_OPTIONAL = Arg(("-e", "--email"), help="Email of the user", type=str)
 ARG_PASSWORD = Arg(
@@ -227,7 +228,7 @@ ROLES_COMMANDS = (
         name="create",
         help="Create role",
         func=lazy_load_command("airflow.providers.fab.auth_manager.cli_commands.role_command.roles_create"),
-        args=(ARG_ROLES, ARG_VERBOSE),
+        args=(ARG_ROLES, ARG_TEAM, ARG_VERBOSE),
     ),
     ActionCommand(
         name="delete",

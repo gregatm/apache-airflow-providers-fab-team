@@ -20,14 +20,19 @@ from __future__ import annotations
 import logging
 import threading
 import warnings
+import os
+from pathlib import Path
 from contextlib import suppress
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from cachetools import TTLCache, cachedmethod
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.wsgi import WSGIMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from flask import current_app, g
 from flask_appbuilder.const import AUTH_LDAP
 from sqlalchemy import select
@@ -50,11 +55,12 @@ from airflow.api_fastapi.auth.managers.models.resource_details import (
     DagAccessEntity,
     DagDetails,
     PoolDetails,
+    TeamDetails,
     VariableDetails,
 )
 from airflow.api_fastapi.common.types import ExtraMenuItem, MenuItem
 from airflow.exceptions import AirflowConfigException, AirflowProviderDeprecationWarning
-from airflow.models import Connection, DagModel, Pool, Variable
+from airflow.models import Connection, DagModel, Pool, Variable, Team
 from airflow.providers.common.compat.sdk import AirflowException, conf
 from airflow.providers.common.compat.security.access_view import (
     AUDIT_LOGS_ALL_ACCESS_VIEW,
@@ -82,13 +88,13 @@ from airflow.providers.fab.www.security.permissions import (
     RESOURCE_DAG_WARNING,
     RESOURCE_DOCS,
     RESOURCE_IMPORT_ERROR,
-    RESOURCE_IMPORT_ERROR_ALL,
     RESOURCE_JOB,
     RESOURCE_PLUGIN,
     RESOURCE_POOL,
     RESOURCE_PROVIDER,
     RESOURCE_TASK_INSTANCE,
     RESOURCE_TASK_LOG,
+    RESOURCE_TEAM,
     RESOURCE_TRIGGER,
     RESOURCE_VARIABLE,
     RESOURCE_WEBSITE,
@@ -220,6 +226,12 @@ class FabAuthManager(BaseAuthManager[User]):
             register_routes,
         )
 
+        dev_mode = os.environ.get("DEV_FAB_MODE", str(False)) == "true"
+        directory = Path(__file__).parent.joinpath("ui", "dev" if dev_mode else "dist")
+        directory.mkdir(exist_ok=True)
+
+        templates = Jinja2Templates(directory=directory)
+
         flask_app = create_app(enable_plugins=False)
         self.flask_app = flask_app
 
@@ -260,7 +272,39 @@ class FabAuthManager(BaseAuthManager[User]):
                     except Exception:
                         log.warning("Failed to remove session during cleanup", exc_info=True)
 
-        app.mount("/", WSGIMiddleware(flask_app))
+
+
+        @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+        def webapp(request: Request):
+            return templates.TemplateResponse(
+                request,
+                "/index.html",
+                {"backend_server_base_url": request.base_url.path},
+                media_type="text/html",
+            )
+
+        app.mount("/fab", WSGIMiddleware(flask_app))
+        app.mount("/static/i18n/locales",
+            StaticFiles(
+                directory=Path(__file__).parent.joinpath("ui", "public", "locales"),
+                html=True,
+            ),
+            name="fab_auth_manager_ui_folder",)
+        app.mount("/static",
+            StaticFiles(
+                directory=directory,
+                html=True,
+            ),
+            name="fab_auth_manager_ui_folder",)
+
+        @app.get("/{rest_of_path:path}", response_class=HTMLResponse, include_in_schema=False)
+        def webapp(request: Request, rest_of_path: str):
+            return templates.TemplateResponse(
+                request,
+                "/index.html",
+                {"backend_server_base_url": request.base_url.path},
+                media_type="text/html",
+            )
 
         return app
 
@@ -368,7 +412,7 @@ class FabAuthManager(BaseAuthManager[User]):
             # ``current_app``. Writing ``_roles``/``_perms`` directly freezes a snapshot for
             # the lifetime of a single FastAPI authorization check.
             user._roles = {role}
-            user._perms = {(perm.action.name, perm.resource.name) for perm in role.permissions}
+            user._perms = {(perm.action.name, perm.resource.name, None) for perm in role.permissions}
         return user
 
     def get_fastapi_middlewares(self) -> list[tuple[_MiddlewareFactory[Any], dict[str, Any]]]:
@@ -412,7 +456,9 @@ class FabAuthManager(BaseAuthManager[User]):
         user: User,
         details: ConfigurationDetails | None = None,
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_CONFIG, user=user)
+        config_section = details.section if details else None
+        team_name = self._get_team_name(details)
+        return self._is_authorized(method=method, resource_type=RESOURCE_CONFIG, user=user, resource_id=config_section, team_name=team_name)
 
     def is_authorized_connection(
         self,
@@ -421,7 +467,9 @@ class FabAuthManager(BaseAuthManager[User]):
         user: User,
         details: ConnectionDetails | None = None,
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_CONNECTION, user=user)
+        connection_id = details.conn_id if details else None
+        team_name = self._get_team_name(details)
+        return self._is_authorized(method=method, resource_type=RESOURCE_CONNECTION, user=user, resource_id=connection_id, team_name=team_name)
 
     def is_authorized_dag(
         self,
@@ -450,11 +498,14 @@ class FabAuthManager(BaseAuthManager[User]):
         :param access_entity: The dag access entity.
         :param details: The dag details.
         """
+        team_name = self._get_team_name(details)
+        dag_id = details.id if details else None
         if access_entity:
             # If a sub-Dag entity is specified, check whether the user has access to it
             resource_types = self._get_fab_resource_types(access_entity)
             access_entity_authorized = all(
-                self._is_authorized(method=method, resource_type=resource_type, user=user)
+                # TODO: Does passing the dag resource id prevent any access to any submenus (team_name and resource_id being None causes special behaviour)
+                self._is_authorized(method=method, resource_type=resource_type, user=user, resource_id=dag_id, team_name=team_name)
                 for resource_type in resource_types
             )
             if access_entity == DagAccessEntity.RUN and details and details.id:
@@ -463,6 +514,8 @@ class FabAuthManager(BaseAuthManager[User]):
                     method=method,
                     resource_type=permissions.resource_name(details.id, RESOURCE_DAG_RUN),
                     user=user,
+                    resource_id=details.id,
+                    team_name=team_name
                 )
                 if not (is_authorized_run or access_entity_authorized):
                     return False
@@ -471,14 +524,14 @@ class FabAuthManager(BaseAuthManager[User]):
 
         if method == "GET" and (not details or not details.id):
             # Scenario 1
-            return self._is_authorized_list_dags(user=user)
+            return self._is_authorized_list_dags(user=user, team_name=team_name)
         if not access_entity:
             # Scenario 2
-            return self._is_authorized_dag(method=method, details=details, user=user)
+            return self._is_authorized_dag(method=method, details=details, user=user, team_name=team_name)
         # Scenario 3
         dag_method: ResourceMethod = "GET" if method == "GET" else "PUT"
         if (details and details.id) and not self._is_authorized_dag(
-            method=dag_method, details=details, user=user
+            method=dag_method, details=details, user=user, team_name=team_name
         ):
             return False
         return True
@@ -496,12 +549,14 @@ class FabAuthManager(BaseAuthManager[User]):
             AirflowProviderDeprecationWarning,
             stacklevel=2,
         )
-        return self._is_authorized(method=method, resource_type=RESOURCE_BACKFILL, user=user)
+        backfill_id = str(details.id) if details else None
+        return self._is_authorized(method=method, resource_type=RESOURCE_BACKFILL, resource_id=backfill_id, user=user)
 
     def is_authorized_asset(
         self, *, method: ResourceMethod, user: User, details: AssetDetails | None = None
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_ASSET, user=user)
+        asset_id = details.id if details else None
+        return self._is_authorized(method=method, resource_type=RESOURCE_ASSET, resource_id=asset_id, user=user)
 
     def is_authorized_asset_alias(
         self,
@@ -510,12 +565,15 @@ class FabAuthManager(BaseAuthManager[User]):
         user: User,
         details: AssetAliasDetails | None = None,
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_ASSET_ALIAS, user=user)
+        asset_alias_id = details.id if details else None
+        return self._is_authorized(method=method, resource_type=RESOURCE_ASSET_ALIAS, resource_id=asset_alias_id, user=user)
 
     def is_authorized_pool(
         self, *, method: ResourceMethod, user: User, details: PoolDetails | None = None
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_POOL, user=user)
+        pool_name = details.name if details else None
+        team_name = self._get_team_name(details)
+        return self._is_authorized(method=method, resource_type=RESOURCE_POOL, user=user, resource_id=pool_name, team_name=team_name)
 
     def is_authorized_variable(
         self,
@@ -524,25 +582,41 @@ class FabAuthManager(BaseAuthManager[User]):
         user: User,
         details: VariableDetails | None = None,
     ) -> bool:
-        return self._is_authorized(method=method, resource_type=RESOURCE_VARIABLE, user=user)
+        variable_key = details.key if details else None
+        team_name = self._get_team_name(details)
+        print(f"is_authorized_variable: {details}, method: {method}, user: {user}")
+        return self._is_authorized(method=method, resource_type=RESOURCE_VARIABLE, user=user, resource_id=variable_key, team_name=team_name)
+
+    def is_authorized_team(
+        self, *, method: ResourceMethod, user: User, details: TeamDetails | None = None
+    ) -> bool:
+        team_name = details.name if details else None
+        return self._is_authorized(
+            method=method,
+            resource_type=RESOURCE_TEAM,
+            user=user,
+            resource_id=team_name,
+            team_name=team_name,
+        )
 
     def is_authorized_view(
         self, *, access_view: AccessView, user: User, team_name: str | None = None
     ) -> bool:
-        # ``team_name`` is ignored: FAB has no multi-team support.
         # "Docs" are only links in the menu, there is no page associated
         method: ExtendedResourceMethod = "MENU" if access_view == AccessView.DOCS else "GET"
         return self._is_authorized(
             method=method,
             resource_type=_MAP_ACCESS_VIEW_TO_FAB_RESOURCE_TYPE[access_view],
             user=user,
+            team_name=team_name,
         )
 
     def is_authorized_custom_view(
         self, *, method: ResourceMethod | str, resource_name: str, user: User
     ) -> bool:
         fab_action_name = get_fab_action_from_method_map().get(method, method)
-        return (fab_action_name, resource_name) in self._get_user_permissions(user)
+        result = (fab_action_name, resource_name, None) in self._get_user_permissions(user)
+        return result
 
     def filter_authorized_menu_items(self, menu_items: list[MenuItem], user: User) -> list[MenuItem]:
         return [
@@ -551,109 +625,9 @@ class FabAuthManager(BaseAuthManager[User]):
             if self._is_authorized(
                 method="MENU",
                 resource_type=_MAP_MENU_ITEM_TO_FAB_RESOURCE_TYPE.get(menu_item, menu_item.value),
-                user=user,
+                user=user
             )
         ]
-
-    @provide_session
-    def get_authorized_connections(
-        self,
-        *,
-        user: User,
-        method: ResourceMethod = "GET",
-        session: Session = NEW_SESSION,
-    ) -> set[str]:
-        """
-        Get connection ids (``conn_id``) the user has access to.
-
-        Fab auth manager does not allow fine-grained access with connections. Thus, return all the connection ids.
-
-        :param user: the user
-        :param method: the method to filter on
-        :param session: the session
-        """
-        rows = session.execute(select(Connection.conn_id)).scalars().all()
-        return set(rows)
-
-    @provide_session
-    def get_authorized_dag_ids(
-        self,
-        *,
-        user: User,
-        method: ResourceMethod = "GET",
-        session: Session = NEW_SESSION,
-    ) -> set[str]:
-        if self._is_authorized(method=method, resource_type=RESOURCE_DAG, user=user):
-            # If user is authorized to access all DAGs, return all DAGs
-            return {dag.dag_id for dag in session.execute(select(DagModel.dag_id))}
-        if isinstance(user, AnonymousUser):
-            return set()
-        user_query = (
-            session.scalars(
-                select(User)
-                .options(
-                    joinedload(User.roles)
-                    .subqueryload(Role.permissions)
-                    .options(joinedload(Permission.action), joinedload(Permission.resource))
-                )
-                .where(User.id == user.id)
-            )
-            .unique()
-            .one()
-        )
-        roles = user_query.roles
-
-        fab_action = get_fab_action_from_method_map().get(method)
-        resources = set()
-        for role in roles:
-            for permission in role.permissions:
-                if permission.action.name == fab_action:
-                    resource = permission.resource.name
-                    if resource == permissions.RESOURCE_DAG:
-                        return {dag.dag_id for dag in session.execute(select(DagModel.dag_id))}
-                    if resource.startswith(permissions.RESOURCE_DAG_PREFIX):
-                        resources.add(resource[len(permissions.RESOURCE_DAG_PREFIX) :])
-        return set(session.scalars(select(DagModel.dag_id).where(DagModel.dag_id.in_(resources))))
-
-    @provide_session
-    def get_authorized_pools(
-        self,
-        *,
-        user: User,
-        method: ResourceMethod = "GET",
-        session: Session = NEW_SESSION,
-    ) -> set[str]:
-        """
-        Get pools the user has access to.
-
-        Fab auth manager does not allow fine-grained access with pools. Thus, return all the pool names.
-
-        :param user: the user
-        :param method: the method to filter on
-        :param session: the session
-        """
-        rows = session.execute(select(Pool.pool)).scalars().all()
-        return {r for r in rows if r is not None}
-
-    @provide_session
-    def get_authorized_variables(
-        self,
-        *,
-        user: User,
-        method: ResourceMethod = "GET",
-        session: Session = NEW_SESSION,
-    ) -> set[str]:
-        """
-        Get variable keys the user has access to.
-
-        Fab auth manager does not allow fine-grained access with variables. Thus, return all the variable keys.
-
-        :param user: the user
-        :param method: the method to filter on
-        :param session: the session
-        """
-        rows = session.execute(select(Variable.key)).scalars().all()
-        return set(rows)
 
     @cached_property
     def security_manager(self) -> FabAirflowSecurityManagerOverride:
@@ -701,20 +675,15 @@ class FabAuthManager(BaseAuthManager[User]):
                 "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/roles/list/",
             },
             {
-                "resource_type": "Actions",
-                "text": "Actions",
-                "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/actions/list/",
+                "resource_type": "List Groups",
+                "text": "Groups",
+                "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/groups/list/",
             },
             {
-                "resource_type": "Resources",
-                "text": "Resources",
-                "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/resources/list/",
-            },
-            {
-                "resource_type": "Permission Pairs",
-                "text": "Permissions",
-                "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/permissions/list/",
-            },
+                "resource_type": "Teams",
+                "text": "Teams",
+                "href": f"{AUTH_MANAGER_FASTAPI_APP_PREFIX}/teams/list/",
+            }
         ]
 
         return [
@@ -735,6 +704,8 @@ class FabAuthManager(BaseAuthManager[User]):
         method: ExtendedResourceMethod,
         resource_type: str,
         user: User,
+        resource_id: str | None = None,
+        team_name: str | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action.
@@ -745,16 +716,27 @@ class FabAuthManager(BaseAuthManager[User]):
 
         :meta private:
         """
+
         fab_action = self._get_fab_action(method)
         user_permissions = self._get_user_permissions(user)
-
-        return (fab_action, resource_type) in user_permissions
+        """
+        If it is a read action and neither a resource_id nor a team_name is specified, it is a generel request if
+        a user has access to this resource. E.g. Navigating to dag overview wants to know if the
+        user is even allowed to see any DAG, but obviously cannot specify a specific dag_id or team_name
+        """
+        if fab_action in [permissions.ACTION_CAN_READ, permissions.ACTION_CAN_ACCESS_MENU] and resource_id is None and team_name is None:
+            result = (fab_action, resource_type) in map(lambda x: x[:2] , user_permissions)
+        else:
+            result = (fab_action, resource_type, None) in user_permissions \
+                 or (fab_action, resource_type, team_name) in user_permissions
+        return result
 
     def _is_authorized_dag(
         self,
         method: ResourceMethod,
         details: DagDetails | None,
         user: User,
+        team_name: str | None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a DAG.
@@ -765,17 +747,19 @@ class FabAuthManager(BaseAuthManager[User]):
 
         :meta private:
         """
-        is_global_authorized = self._is_authorized(method=method, resource_type=RESOURCE_DAG, user=user)
+        team_name = team_name or self._get_team_name(details)
+        dag_id = details.id if details else None
+        is_global_authorized = self._is_authorized(method=method, resource_type=RESOURCE_DAG, user=user, resource_id=dag_id, team_name=team_name)
         if is_global_authorized:
             return True
 
         if details and details.id:
             # Check whether the user has permissions to access a specific DAG
             resource_dag_name = permissions.resource_name(details.id, RESOURCE_DAG)
-            return self._is_authorized(method=method, resource_type=resource_dag_name, user=user)
+            return self._is_authorized(method=method, resource_type=resource_dag_name, user=user, resource_id=details.id, team_name=team_name)
         return False
 
-    def _is_authorized_list_dags(self, *, user: User) -> bool:
+    def _is_authorized_list_dags(self, *, user: User, team_name: str | None) -> bool:
         """
         Return whether the user is authorized to list Dags.
 
@@ -786,12 +770,22 @@ class FabAuthManager(BaseAuthManager[User]):
         is_global_authorized = self._is_authorized(method="GET", resource_type=RESOURCE_DAG, user=user)
         if is_global_authorized:
             return True
-
         user_permissions = self._get_user_permissions(user)
-        for action, resource in user_permissions:
-            if action == ACTION_CAN_READ and resource.startswith(RESOURCE_DAG_PREFIX):
+        for action, resource, team in user_permissions:
+            if action == ACTION_CAN_READ and (resource == RESOURCE_DAG or resource.startswith(RESOURCE_DAG_PREFIX)):
                 return True
         return False
+
+    def _get_teams(self) -> set[str]:
+        if NEW_SESSION:
+            NEW_SESSION.execute(select(Team.name)).scalars().all()
+        return []
+
+    @staticmethod
+    def _get_team_name(
+        details: ConnectionDetails | DagDetails | PoolDetails | VariableDetails | None,
+    ) -> str | None:
+        return getattr(details, "team_name", None) if details else None
 
     @staticmethod
     def _get_fab_action(method: ExtendedResourceMethod) -> str:

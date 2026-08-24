@@ -34,3 +34,4 @@ def register_routes() -> None:
     importlib.import_module("airflow.providers.fab.auth_manager.api_fastapi.routes.login")
     importlib.import_module("airflow.providers.fab.auth_manager.api_fastapi.routes.roles")
     importlib.import_module("airflow.providers.fab.auth_manager.api_fastapi.routes.users")
+    importlib.import_module("airflow.providers.fab.auth_manager.api_fastapi.routes.teams")

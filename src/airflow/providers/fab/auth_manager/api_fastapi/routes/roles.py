@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import Depends, Path, Query, status
 
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
+from airflow.api_fastapi.logging.decorators import action_logging
 from airflow.providers.fab.auth_manager.api_fastapi.datamodels.roles import (
     PermissionCollectionResponse,
     RoleBody,
@@ -44,13 +45,14 @@ from airflow.providers.fab.www.security import permissions
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("POST", permissions.RESOURCE_ROLE))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("POST", permissions.RESOURCE_ROLE))],
 )
 def create_role(body: RoleBody) -> RoleResponse:
     """Create a new role (actions can be empty)."""
     with get_application_builder():
         return FABAuthManagerRoles.create_role(body=body)
 
+from typing import Dict, Union
 
 @fab_router.get(
     "/roles",
@@ -69,10 +71,14 @@ def get_roles(
     order_by: str = Query("name", description="Field to order by. Prefix with '-' for descending."),
     limit: int = Depends(get_effective_limit()),
     offset: int = Query(0, ge=0, description="Number of items to skip before starting to collect results."),
+    roleNamePrefixPattern: str = Query("", description="Name prefix to filter roles by."),
+    roleNamePattern: str = Query("", description="Name to filter roles by."),
+    team_name: str | None = Query(None, description="Team to filter roles by."),
 ) -> RoleCollectionResponse:
     """List roles with pagination and ordering."""
+    print(team_name)
     with get_application_builder():
-        return FABAuthManagerRoles.get_roles(order_by=order_by, limit=limit, offset=offset)
+        return FABAuthManagerRoles.get_roles(order_by=order_by, limit=limit, offset=offset, roleNamePattern=roleNamePattern, roleNamePrefixPattern=roleNamePrefixPattern, team_name=team_name)
 
 
 @fab_router.delete(
@@ -84,7 +90,7 @@ def get_roles(
             status.HTTP_404_NOT_FOUND,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("DELETE", permissions.RESOURCE_ROLE))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("DELETE", permissions.RESOURCE_ROLE))],
 )
 def delete_role(name: str = Path(..., min_length=1)) -> None:
     """Delete an existing role."""
@@ -115,7 +121,7 @@ def get_role(name: str = Path(..., min_length=1)) -> RoleResponse:
             status.HTTP_404_NOT_FOUND,
         ]
     ),
-    dependencies=[Depends(requires_fab_custom_view("PUT", permissions.RESOURCE_ROLE))],
+    dependencies=[Depends(action_logging()), Depends(requires_fab_custom_view("PUT", permissions.RESOURCE_ROLE))],
 )
 def patch_role(
     body: RoleBody,

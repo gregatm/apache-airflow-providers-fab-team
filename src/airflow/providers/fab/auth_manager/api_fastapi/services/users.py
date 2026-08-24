@@ -64,12 +64,12 @@ class FABAuthManagerUsers:
         return UserResponse.model_validate(user)
 
     @classmethod
-    def get_users(cls, *, order_by: str, limit: int, offset: int) -> UserCollectionResponse:
+    def get_users(cls, *, order_by: str, limit: int, offset: int, usernamePattern: str | None, usernamePrefixPattern: str | None) -> UserCollectionResponse:
         """Get users with pagination and ordering."""
         security_manager = get_fab_auth_manager().security_manager
         session = security_manager.session
 
-        total_entries = session.scalars(select(func.count(User.id))).one()
+        countStmt = select(func.count(User.id))
 
         ordering = build_ordering(
             order_by,
@@ -85,12 +85,21 @@ class FABAuthManagerUsers:
         )
 
         stmt = select(User).order_by(ordering).offset(offset).limit(limit)
+        if usernamePrefixPattern is not None:
+            stmt = stmt.filter(User.username.startswith(usernamePrefixPattern))
+            countStmt = countStmt.filter(User.username.startswith(usernamePrefixPattern))
+        if usernamePattern is not None:
+            stmt = stmt.filter(User.username.contains(usernamePattern))
+            countStmt = countStmt.filter(User.username.contains(usernamePattern))
         users = session.scalars(stmt).unique().all()
+
+        total_entries = session.scalars(countStmt).one()
 
         return UserCollectionResponse(
             users=[UserResponse.model_validate(u) for u in users],
             total_entries=total_entries,
         )
+
 
     @classmethod
     def create_user(cls, body: UserBody) -> UserResponse:

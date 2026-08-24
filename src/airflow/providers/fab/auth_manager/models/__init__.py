@@ -41,13 +41,14 @@ from sqlalchemy import (
     func,
     select,
 )
-from sqlalchemy.orm import Mapped, backref, declared_attr, relationship
-
+from sqlalchemy.orm import Mapped, Session, backref, declared_attr, relationship
 from airflow import __version__ as airflow_version
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
-from airflow.models.base import _get_schema, naming_convention
+from airflow.models.team import Team as BaseTeam
+from airflow.models.base import _get_schema, naming_convention, StringID
 from airflow.providers.common.compat.sqlalchemy.orm import mapped_column
-
+from airflow.utils.session import NEW_SESSION, provide_session
+from airflow.models.base import Base
 """
 Compatibility note: The models in this file are duplicated from Flask AppBuilder.
 """
@@ -64,7 +65,6 @@ else:
     Model.metadata = Base.metadata
 
 model_metadata = Model.metadata
-
 
 assoc_group_role = Table(
     "ab_group_role",
@@ -142,7 +142,6 @@ assoc_user_group = Table(
     extend_existing=True,
 )
 
-
 class Action(Model):
     """Represents permission actions such as `can_read`."""
 
@@ -198,6 +197,8 @@ class Role(Model):
         primary_key=True,
     )
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    """Adding a foreign key would need to rewrite and import the whole airflow data structure into the flask metadata"""
+    team_name: Mapped[str] = mapped_column(String(50), nullable=True)
     permissions: Mapped[list[Permission]] = relationship(
         "Permission",
         secondary=assoc_permission_role,
@@ -341,7 +342,7 @@ class User(Model, BaseUser):
                 sm = current_app.appbuilder.sm
                 self._perms: set[tuple[str, str]] = set(
                     sm.session.execute(
-                        select(sm.action_model.name, sm.resource_model.name)
+                        select(sm.action_model.name, sm.resource_model.name, sm.role_model.team_name)
                         .join(sm.permission_model.action)
                         .join(sm.permission_model.resource)
                         .join(sm.permission_model.role)
@@ -350,9 +351,28 @@ class User(Model, BaseUser):
                 )
             else:
                 self._perms = {
-                    (perm.action.name, perm.resource.name) for role in self.roles for perm in role.permissions
+                    (perm.action.name, perm.resource.name, role.team_name) for role in self.roles for perm in role.permissions
                 }
         return self._perms
+
+    @property
+    def teams(self):
+        if not self._teams:
+            if current_app:
+                sm = current_app.appbuilder.sm
+                self._teams: set[str] = set(
+                    team[0] for team in
+                    sm.session.execute(
+                        select(sm.role_model.team_name)
+                        .where(sm.role_model.user.contains(self))
+                    )
+                )
+            else:
+                self._teams = {
+                    role.team_name for role in self.roles
+                }
+
+        return self._teams
 
     def get_id(self) -> str:
         return str(self.id)

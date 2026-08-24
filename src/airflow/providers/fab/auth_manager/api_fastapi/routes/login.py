@@ -26,7 +26,7 @@ from airflow.api_fastapi.app import get_auth_manager
 from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_TOKEN
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.providers.common.compat.sdk import conf
-from airflow.providers.fab.auth_manager.api_fastapi.datamodels.login import LoginResponse
+from airflow.providers.fab.auth_manager.api_fastapi.datamodels.login import LoginResponse, ProvidersResponse
 from airflow.providers.fab.auth_manager.api_fastapi.routes.router import auth_router
 from airflow.providers.fab.auth_manager.api_fastapi.services.login import FABAuthManagerLogin
 from airflow.providers.fab.version_compat import AIRFLOW_V_3_1_8_PLUS
@@ -78,6 +78,17 @@ def create_token(request: Request, body: dict[str, Any] = Body(...)) -> LoginRes
     with _get_flask_app().app_context():
         return FABAuthManagerLogin.create_token(headers=dict(request.headers), body=body)
 
+
+@auth_router.get(
+    "/providers",
+    response_model=ProvidersResponse,
+    status_code=status.HTTP_200_OK,
+    responses=create_openapi_http_exception_doc([status.HTTP_400_BAD_REQUEST, status.HTTP_401_UNAUTHORIZED]),
+)
+def get_providers(request: Request) -> ProvidersResponse:
+    """Retrieve providers from fab"""
+    with _get_flask_app().app_context():
+        return FABAuthManagerLogin.get_providers()
 
 @auth_router.post(
     "/token/cli",

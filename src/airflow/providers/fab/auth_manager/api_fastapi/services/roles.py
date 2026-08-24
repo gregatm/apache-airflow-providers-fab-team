@@ -74,7 +74,7 @@ class FABAuthManagerRoles:
 
         cls._check_action_and_resource(security_manager, perms)
 
-        security_manager.bulk_sync_roles([{"role": body.name, "perms": perms}])
+        security_manager.bulk_sync_roles([{"role": body.name, "team_name": body.team_name, "perms": perms}])
 
         created = security_manager.find_role(name=body.name)
         if not created:
@@ -86,15 +86,30 @@ class FABAuthManagerRoles:
         return RoleResponse.model_validate(created)
 
     @classmethod
-    def get_roles(cls, *, order_by: str, limit: int, offset: int) -> RoleCollectionResponse:
+    def get_roles(cls, *, order_by: str, limit: int, offset: int, roleNamePattern: str | None, roleNamePrefixPattern: str | None, team_name: str | None) -> RoleCollectionResponse:
         security_manager = get_fab_auth_manager().security_manager
         session = security_manager.session
 
-        total_entries = session.scalars(select(func.count(Role.id))).one()
+        countStmt = select(func.count(Role.id))
 
-        ordering = build_ordering(order_by, allowed={"name": Role.name, "role_id": Role.id})
+
+        ordering = build_ordering(order_by, allowed={"name": Role.name, "role_id": Role.id, "team_name": Role.team_name})
 
         stmt = select(Role).order_by(ordering).offset(offset).limit(limit)
+        if roleNamePrefixPattern is not None:
+            stmt = stmt.filter(Role.name.startswith(roleNamePrefixPattern))
+            countStmt = countStmt.filter(Role.name.startswith(roleNamePrefixPattern))
+        if roleNamePattern is not None:
+            stmt = stmt.filter(Role.name.contains(roleNamePattern))
+            countStmt = countStmt.filter(Role.name.contains(roleNamePattern))
+        if team_name == "<none>":
+            stmt = stmt.filter(Role.team_name == None)
+            countStmt = countStmt.filter(Role.team_name == None)
+        elif team_name:
+            stmt = stmt.filter(Role.team_name == team_name)
+            countStmt = countStmt.filter(Role.team_name == team_name)
+
+        total_entries = session.scalars(countStmt).one()
         roles = session.scalars(stmt).unique().all()
 
         return RoleCollectionResponse(
@@ -152,15 +167,15 @@ class FABAuthManagerRoles:
                         detail=f"'{field}' in update_mask is unknown",
                     )
         else:
-            update_data = RoleResponse(name=body.name, permissions=body.permissions or [])
+            update_data = RoleResponse(name=body.name, permissions=body.permissions or [], team_name=body.team_name or None)
 
         perms: list[tuple[str, str]] = [(ar.action.name, ar.resource.name) for ar in (body.permissions or [])]
         cls._check_action_and_resource(security_manager, perms)
-        security_manager.bulk_sync_roles([{"role": name, "perms": perms}])
+        security_manager.update_role_permissions({"name": name, "permissions": perms})
 
         new_name = update_data.name
-        if new_name and new_name != existing.name:
-            security_manager.update_role(role_id=existing.id, name=new_name)
+        if new_name and new_name != existing.name or update_data.team_name != existing.team_name:
+            security_manager.update_role(role_id=existing.id, name=new_name, team_name=update_data.team_name)
         return RoleResponse.model_validate(update_data)
 
     @classmethod

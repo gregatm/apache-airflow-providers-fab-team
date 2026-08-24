@@ -87,3 +87,11 @@ Extra         Dependencies
 
 The changelog for the provider package can be found in the
 `changelog <https://airflow.apache.org/docs/apache-airflow-providers-fab/3.8.1/changelog.html>`_.
+
+Generate OpenAPI-Spec
+----------------------
+
+```
+pip install rich_click openapi_spec_validator
+scripts/in_container/run_generate_openapi_spec_providers.py fab
+```

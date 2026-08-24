@@ -46,19 +46,19 @@ def roles_list(args):
 
     if not args.permission:
         AirflowConsole().print_as(
-            data=sorted(r.name for r in roles), output=args.output, mapper=lambda x: {"name": x}
+            data=sorted(roles, key=lambda x: x.name), output=args.output, mapper=lambda x: {"name": x.name, "team": x.team_name}
         )
         return
 
     permission_map: dict[tuple[str, str], list[str]] = defaultdict(list)
     for role in roles:
         for permission in role.permissions:
-            permission_map[(role.name, permission.resource.name)].append(permission.action.name)
+            permission_map[(role.name, role.team_name, permission.resource.name)].append(permission.action.name)
 
     AirflowConsole().print_as(
         data=sorted(permission_map),
         output=args.output,
-        mapper=lambda x: {"name": x[0], "resource": x[1], "action": ",".join(sorted(permission_map[x]))},
+        mapper=lambda x: {"name": x[0], "team": x[1],"resource": x[2], "action": ",".join(sorted(permission_map[x]))},
     )
 
 
@@ -69,7 +69,7 @@ def roles_create(args):
     """Create new empty role in DB."""
     with get_application_builder() as appbuilder:
         for role_name in args.role:
-            appbuilder.sm.add_role(role_name)
+            appbuilder.sm.add_role(role_name, team=args.team)
     print(f"Added {len(args.role)} role(s)")
 
 
@@ -167,12 +167,12 @@ def roles_export(args):
     for role in exporting_roles:
         if role.permissions:
             for permission in role.permissions:
-                permission_map[(role.name, permission.resource.name)].append(permission.action.name)
+                permission_map[(role.name, role.team, permission.resource.name)].append(permission.action.name)
         else:
-            permission_map[(role.name, "")].append("")
+            permission_map[(role.name, role.team, "")].append("")
     export_data = [
-        {"name": role, "resource": resource, "action": ",".join(sorted(permissions))}
-        for (role, resource), permissions in permission_map.items()
+        {"name": role, "team": team, "resource": resource, "action": ",".join(sorted(permissions))}
+        for (role, team, resource), permissions in permission_map.items()
     ]
     kwargs = {} if not args.pretty else {"sort_keys": False, "indent": 4}
     with open(filename, "w", encoding="utf-8") as f:
