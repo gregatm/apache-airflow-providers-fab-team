@@ -17,7 +17,7 @@
 # under the License.
 
 ---
-package-name: apache-airflow-providers-fab
+package-name: apache-airflow-providers-fab-team
 
 name: Fab
 

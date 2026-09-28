@@ -51,9 +51,12 @@ class CustomBuild(BuilderInterface[BuilderConfig, PluginManager]):
         log.warning("Cleaning generated files in directory: %s", work_dir)
         fab_package_src = work_dir / "src" / "airflow" / "providers" / "fab"
         fab_ui_path = fab_package_src / "www"
+        airflow_ui_path = fab_package_src / "auth_manager" / "ui"
         self.clean_dir(fab_ui_path / ".pnpm-store")
         self.clean_dir(fab_ui_path / "static" / "dist")
         self.clean_dir(fab_ui_path / "node_modules")
+        self.clean_dir(airflow_ui_path / "dist")
+        self.clean_dir(airflow_ui_path / "node_modules")
         (work_dir / "www-hash.txt").unlink(missing_ok=True)
 
     def get_version_api(self) -> dict[str, Callable[..., str]]:

@@ -23,7 +23,7 @@
 
 def get_provider_info():
     return {
-        "package-name": "apache-airflow-providers-fab",
+        "package-name": "apache-airflow-providers-fab-team",
         "name": "Fab",
         "description": "`Flask App Builder <https://flask-appbuilder.readthedocs.io/>`__\n",
         "config": {

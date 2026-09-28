@@ -32,7 +32,7 @@ requires = [
 build-backend = "hatchling.build"
 
 [project]
-name = "apache-airflow-providers-fab"
+name = "apache-airflow-providers-fab-team"
 version = "3.8.1"
 description = "Provider package apache-airflow-providers-fab for Apache Airflow"
 readme = "README.rst"
@@ -180,6 +180,8 @@ exclude = [
     "src/airflow/providers/__init__.py",
     "src/airflow/providers/fab/www/.pnpm-store",
     "src/airflow/providers/fab/www/node_modules",
+    "src/airflow/providers/fab/auth_manager/ui/node_modules",
+    "src/airflow/providers/fab/auth_manager/ui/.pnpm-store",
 ]
 
 [tool.hatch.build.targets.custom]
@@ -187,16 +189,20 @@ path = "./hatch_build.py"
 
 artifacts = [
     "src/airflow/providers/fab/www/static",
+    "src/airflow/providers/fab/auth_manager/ui/dist/static",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/airflow']
 artifacts = [
     "src/airflow/providers/fab/www/static",
+    "src/airflow/providers/fab/auth_manager/ui/dist/static",
 ]
 exclude = [
     "src/airflow/__init__.py",
     "src/airflow/providers/__init__.py",
     "src/airflow/providers/fab/www/.pnpm-store",
     "src/airflow/providers/fab/www/node_modules",
+    "src/airflow/providers/fab/auth_manager/ui/node_modules",
+    "src/airflow/providers/fab/auth_manager/ui/.pnpm-store",
 ]
